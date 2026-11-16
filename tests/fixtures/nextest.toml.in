@@ -1,0 +1,7 @@
+experimental = ["wrapper-scripts"]
+[scripts.wrapper.prevtest]
+command = [{prevtest:?}]
+target-runner = "overrides-wrapper"
+[[profile.default.scripts]]
+filter = "all()"
+run-wrapper = "prevtest"

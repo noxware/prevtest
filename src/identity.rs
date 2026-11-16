@@ -66,25 +66,69 @@ impl CacheKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::{self, FileTimes};
 
-    fn key(args: &[&str]) -> CacheKey {
-        let binary = FileIdentity {
-            path: "/workspace/test-binary".into(),
-            hash: blake3::hash(b"binary contents"),
+    #[test]
+    fn hash_changes_with_content_even_if_metadata_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("input");
+        fs::write(&path, b"before").unwrap();
+        let mtime = fs::metadata(&path).unwrap().modified().unwrap();
+        let before = FileIdentity::read(path.clone()).unwrap();
+
+        fs::write(&path, b"after!").unwrap();
+        File::open(&path)
+            .unwrap()
+            .set_times(FileTimes::new().set_modified(mtime))
+            .unwrap();
+        let after = FileIdentity::read(path).unwrap();
+        assert_ne!(before.hash, after.hash);
+    }
+
+    #[test]
+    fn key_distinguishes_binary_content_and_test_context() {
+        let mut binary = FileIdentity {
+            path: "/workspace/binary".into(),
+            hash: blake3::hash(b"before"),
         };
-        let args: Vec<_> = args.iter().map(OsString::from).collect();
-        CacheKey::new(
-            &binary,
-            "probe::integration",
-            "tests::example",
-            Path::new("/workspace"),
-            Path::new("/workspace"),
-            &args,
-        )
+        let key = |binary: &FileIdentity, id, name, cwd| {
+            CacheKey::new(
+                binary,
+                id,
+                name,
+                Path::new(cwd),
+                Path::new("/workspace"),
+                &[],
+            )
+        };
+        let original = key(&binary, "binary", "first", "/workspace");
+        assert_ne!(original, key(&binary, "other", "first", "/workspace"));
+        assert_ne!(original, key(&binary, "binary", "second", "/workspace"));
+        assert_ne!(
+            original,
+            key(&binary, "binary", "first", "/workspace/package")
+        );
+        binary.hash = blake3::hash(b"after");
+        assert_ne!(original, key(&binary, "binary", "first", "/workspace"));
     }
 
     #[test]
     fn argument_boundaries_and_order_affect_the_key() {
+        let binary = FileIdentity {
+            path: "/workspace/binary".into(),
+            hash: blake3::hash(b"contents"),
+        };
+        let key = |args: &[&str]| {
+            let args: Vec<_> = args.iter().map(OsString::from).collect();
+            CacheKey::new(
+                &binary,
+                "binary",
+                "test",
+                Path::new("/workspace"),
+                Path::new("/workspace"),
+                &args,
+            )
+        };
         assert_ne!(key(&["ab", "c"]), key(&["a", "bc"]));
         assert_ne!(key(&["a", "b"]), key(&["b", "a"]));
         assert_ne!(key(&[]), key(&[""]));

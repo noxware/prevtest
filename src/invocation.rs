@@ -62,3 +62,30 @@ impl Invocation {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::{CommandFactory, FromArgMatches};
+
+    fn parse(args: &[&str]) -> Result<Args, clap::Error> {
+        let matches = Args::command()
+            .mut_arg("force", |arg| arg.env(None::<&str>))
+            .try_get_matches_from(args)?;
+        Args::from_arg_matches(&matches)
+    }
+
+    #[test]
+    fn force_is_a_flag_before_the_executable() {
+        assert!(!parse(&["prevtest", "binary"]).unwrap().force);
+        assert!(parse(&["prevtest", "--force", "binary"]).unwrap().force);
+        assert!(parse(&["prevtest", "--force=true", "binary"]).is_err());
+    }
+
+    #[test]
+    fn arguments_after_the_executable_are_passed_through() {
+        let args = parse(&["prevtest", "binary", "--force", "--exact"]).unwrap();
+        assert!(!args.force);
+        assert_eq!(args.command, ["binary", "--force", "--exact"]);
+    }
+}
