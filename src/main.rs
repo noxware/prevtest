@@ -1,4 +1,5 @@
 mod execution;
+mod hashing;
 mod identity;
 mod invocation;
 mod reporting;

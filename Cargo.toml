@@ -9,6 +9,7 @@ publish = false
 anyhow = "1"
 blake3 = "1.8"
 clap = { version = "4.6", features = ["derive", "env"] }
+libc = "0.2"
 rusqlite = { version = "0.41", default-features = false, features = ["bundled"] }
 
 [dev-dependencies]

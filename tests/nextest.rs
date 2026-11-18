@@ -42,6 +42,7 @@ fn cache_lifecycle() {
         .args(["--no-fail-fast", "--success-output", "immediate"])
         .env("CARGO_TARGET_DIR", project.path().join("target"))
         .env_remove("PREVTEST_CACHE_DIR")
+        .env_remove("PREVTEST_STATE_DIR")
         .env_remove("PREVTEST_FORCE");
 
     // Cold cache, then both results reused.

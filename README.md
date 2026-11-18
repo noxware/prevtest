@@ -8,7 +8,7 @@ Work in progress.
 
 The main proposal is described in the [high-level design document](docs/high-level-design.md).
 
-The repo currently contains an early implementation of the first increment, still missing the file hashing shortcut, signal handling, integration tests, etc.
+The repo currently contains an early implementation of the first increment, still missing signal handling, etc.
 
 ## Installation
 
@@ -41,3 +41,10 @@ cargo nextest run
 ```
 
 Set `PREVTEST_FORCE=1` to force test execution while still updating the cache.
+
+Test results go in `.prevtest/cache` and machine-local state in `.prevtest/state`.
+`PREVTEST_CACHE_DIR` and `PREVTEST_STATE_DIR` change them, resolving relative paths
+from the workspace root. **Only the cache directory is meant to be saved and restored in CI.**
+
+Binary hashes are reused only when the binary is on the same filesystem as the state
+directory. Otherwise prevtest hashes it on every run.

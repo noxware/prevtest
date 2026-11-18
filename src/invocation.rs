@@ -5,6 +5,8 @@ use clap::{Parser, builder::BoolishValueParser};
 use std::{env, ffi::OsString, path::PathBuf};
 
 const DEFAULT_CACHE_DIR: &str = ".prevtest/cache";
+// Separate from the cache directory, which CI may save and restore.
+const DEFAULT_STATE_DIR: &str = ".prevtest/state";
 
 #[derive(Parser)]
 #[command(version, about = "Reuse previous test results with nextest.")]
@@ -27,6 +29,7 @@ pub struct Invocation {
     pub workspace: PathBuf,
     pub working_dir: PathBuf,
     pub cache_dir: PathBuf,
+    pub state_dir: PathBuf,
     pub force: bool,
     pub report_path: Option<PathBuf>,
 }
@@ -44,8 +47,10 @@ impl Invocation {
         let workspace = workspace
             .canonicalize()
             .context("resolving workspace root")?;
-        let cache_dir = workspace
-            .join(env::var_os("PREVTEST_CACHE_DIR").unwrap_or_else(|| DEFAULT_CACHE_DIR.into()));
+        // Relative directories resolve from the workspace root.
+        let dir = |var, default: &str| workspace.join(env::var_os(var).unwrap_or(default.into()));
+        let cache_dir = dir("PREVTEST_CACHE_DIR", DEFAULT_CACHE_DIR);
+        let state_dir = dir("PREVTEST_STATE_DIR", DEFAULT_STATE_DIR);
         let mut command = args.command.into_iter();
         Ok(Self {
             executable: command.next().context("test executable is missing")?,
@@ -55,6 +60,7 @@ impl Invocation {
             workspace,
             working_dir: env::current_dir()?,
             cache_dir,
+            state_dir,
             force: args.force
                 || env::var("NEXTEST_ATTEMPT").is_ok_and(|value| value != "1")
                 || env::var("NEXTEST_STRESS_CURRENT").is_ok_and(|value| value != "none"),

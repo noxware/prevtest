@@ -165,15 +165,22 @@ to review.
 Cache validation uses the content hashes of the binary and declared files.
 A different hash invalidates the cached result.
 
-A possible shortcut is to reuse file hashes while mtime and size match. This
-metadata reflects local filesystem state, so the hash cache could be stored
-separately from test results reused in CI.
+The wrapper runs once per test, so prevtest avoids rehashing the same binary each
+time. It reuses a file's hash while its metadata stays the same, including inode,
+size, and nanosecond mtime and ctime. That metadata only describes the local
+filesystem, so these hashes live in a separate database that CI doesn't restore.
 
-If both the stored and current mtimes have zero nanoseconds, we would assume
-whole-second precision and recompute the hash anyway. That assumption may be
-wrong, but then we only pay for an unnecessary hash calculation.
+For the same reason, cache keys use the content hash rather than the metadata:
+the same contents hash the same on any machine, but the metadata changes with
+every build, checkout, or copy.
 
-The shortcut would matter less with a persistent server that hashes each binary
+A second write within the same timestamp tick could leave the metadata unchanged,
+so a hash is only saved if the file changed before prevtest started reading it.
+Like Git and Mercurial, prevtest asks the filesystem for the time: before reading,
+it writes to a file in its state directory and compares timestamps. Files on
+another filesystem are hashed every time.
+
+Reusing hashes would matter less with a persistent server that hashes each binary
 once per run and shares the result across tests.
 
 Inputs are assumed to remain stable during test execution.

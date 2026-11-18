@@ -265,6 +265,7 @@ dependencies = [
  "anyhow",
  "blake3",
  "clap",
+ "libc",
  "rusqlite",
  "tempfile",
 ]

@@ -2,27 +2,34 @@
 
 use crate::{
     execution::{self, CapturedOutput},
-    identity::{CacheKey, FileIdentity},
+    identity::{self, CacheKey},
     invocation::Invocation,
     reporting::{self, Outcome},
-    storage::{Cache, SqliteCache},
+    storage::{Cache, State},
 };
 use anyhow::{Context, Result};
 
 pub fn run(invocation: Invocation) -> Result<i32> {
-    let binary = match FileIdentity::read(invocation.working_dir.join(&invocation.executable)) {
-        Ok(binary) => binary,
+    let binary_path = invocation.working_dir.join(&invocation.executable);
+    let state = State::open(&invocation.state_dir)
+        .inspect_err(|error| eprintln!("prevtest: local state unavailable: {error:#}"))
+        .ok();
+    let binary_hash = identity::file_hash(&binary_path, state.as_ref());
+    // Release the state before running the test, which may take a while.
+    drop(state);
+    let binary_hash = match binary_hash {
+        Ok(hash) => hash,
         Err(error) => return on_cache_unavailable(&invocation, error),
     };
     let key = CacheKey::new(
-        &binary,
+        &binary_hash,
         &invocation.binary_id,
         &invocation.test_name,
         &invocation.working_dir,
         &invocation.workspace,
         &invocation.args,
     );
-    let cache = match SqliteCache::open(&invocation.cache_dir) {
+    let cache = match Cache::open(&invocation.cache_dir) {
         Ok(cache) => cache,
         Err(error) => return on_cache_unavailable(&invocation, error),
     };
@@ -32,8 +39,8 @@ pub fn run(invocation: Invocation) -> Result<i32> {
     }
 
     let cached_result = cache
-        .get(&key)
-        .with_context(|| format!("loading cached result for {}", binary.path.display()));
+        .get_result(&key)
+        .with_context(|| format!("loading cached result for {}", binary_path.display()));
     match cached_result {
         Ok(Some(output)) => on_cache_hit(&invocation, &output),
         Ok(None) => on_cache_miss(&invocation, &cache, &key),
@@ -44,7 +51,7 @@ pub fn run(invocation: Invocation) -> Result<i32> {
     }
 }
 
-fn on_force(invocation: &Invocation, cache: &impl Cache, key: &CacheKey) -> Result<i32> {
+fn on_force(invocation: &Invocation, cache: &Cache, key: &CacheKey) -> Result<i32> {
     let result = execute_and_update_cache(invocation, cache, key)?;
     match result.cache_update {
         Ok(()) => {
@@ -61,7 +68,7 @@ fn on_cache_hit(invocation: &Invocation, output: &CapturedOutput) -> Result<i32>
     Ok(0)
 }
 
-fn on_cache_miss(invocation: &Invocation, cache: &impl Cache, key: &CacheKey) -> Result<i32> {
+fn on_cache_miss(invocation: &Invocation, cache: &Cache, key: &CacheKey) -> Result<i32> {
     let result = execute_and_update_cache(invocation, cache, key)?;
     match result.cache_update {
         Ok(()) => {
@@ -99,19 +106,19 @@ struct RunResult {
 
 fn execute_and_update_cache(
     invocation: &Invocation,
-    cache: &impl Cache,
+    cache: &Cache,
     key: &CacheKey,
 ) -> Result<RunResult> {
     let executed = execution::run(&invocation.executable, &invocation.args)?;
     let cache_update = if executed.status.success() {
-        cache.put(
+        cache.put_result(
             key,
             &invocation.binary_id,
             &invocation.test_name,
             &executed.output,
         )
     } else {
-        cache.remove(key)
+        cache.delete_result(key)
     };
     Ok(RunResult {
         exit_code: executed.exit_code(),
