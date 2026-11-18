@@ -4,6 +4,7 @@ mod identity;
 mod invocation;
 mod reporting;
 mod runner;
+mod signals;
 mod storage;
 
 use clap::Parser;
@@ -14,11 +15,8 @@ const WRAPPER_ERROR_EXIT_CODE: i32 = 125;
 
 fn main() {
     let invocation = Invocation::from_args(Args::parse());
-    match invocation.and_then(runner::run) {
-        Ok(code) => std::process::exit(code),
-        Err(error) => {
-            eprintln!("prevtest: {error:#}");
-            std::process::exit(WRAPPER_ERROR_EXIT_CODE);
-        }
+    if let Err(error) = invocation.and_then(runner::run).and_then(signals::exit) {
+        eprintln!("prevtest: {error:#}");
+        std::process::exit(WRAPPER_ERROR_EXIT_CODE);
     }
 }

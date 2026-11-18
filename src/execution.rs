@@ -1,10 +1,10 @@
 //! Test execution, output capture, and replay.
 
+use crate::signals;
 use anyhow::{Context, Result};
 use std::{
     ffi::{OsStr, OsString},
     io::{self, Read, Write},
-    os::unix::process::ExitStatusExt,
     process::{Command, ExitStatus, Stdio},
     thread,
 };
@@ -17,35 +17,40 @@ pub struct CapturedOutput {
 pub struct Execution {
     pub status: ExitStatus,
     pub output: CapturedOutput,
-}
-
-impl Execution {
-    pub fn exit_code(&self) -> i32 {
-        self.status
-            .code()
-            .unwrap_or_else(|| 128 + self.status.signal().unwrap_or(0))
-    }
+    pub interrupted: bool,
 }
 
 pub fn run(executable: &OsStr, args: &[OsString]) -> Result<Execution> {
-    let mut child = Command::new(executable)
+    let (stderr, stderr_writer) = io::pipe()?;
+    let mut command = Command::new(executable);
+    command
         .args(args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("starting {}", executable.to_string_lossy()))?;
-    let stdout = child.stdout.take().expect("stdout is piped");
-    let stderr = child.stderr.take().expect("stderr is piped");
+        .stderr(stderr_writer);
+    let gate = signals::prepare(&mut command)?;
+
     thread::scope(|scope| {
-        let out = scope.spawn(|| capture(stdout, io::stdout().lock()));
-        let err = scope.spawn(|| capture(stderr, io::stderr().lock()));
-        let status = child.wait();
-        let stdout = out.join().expect("stdout reader panicked");
-        let stderr = err.join().expect("stderr reader panicked");
+        let test = scope.spawn(move || -> Result<_> {
+            let child = command.spawn();
+            drop(command); // Release our copy of the stderr writer, including on a spawn error.
+            let mut child =
+                child.with_context(|| format!("starting {}", executable.to_string_lossy()))?;
+            let pipe = child.stdout.take().expect("stdout is piped");
+            let stdout = capture(pipe, io::stdout().lock());
+            let status = child.wait().context("waiting for test")?;
+            Ok((status, stdout.context("capturing stdout")?))
+        });
+
+        // spawn waits for exec, so answer the child here before draining stderr.
+        let started = gate.release();
+        let stderr = capture(stderr, io::stderr().lock());
+        let (status, stdout) = test.join().expect("test thread panicked")?;
+        started?;
         Ok(Execution {
-            status: status.context("waiting for test")?,
+            interrupted: signals::pending()?.is_some(),
+            status,
             output: CapturedOutput {
-                stdout: stdout.context("capturing stdout")?,
+                stdout,
                 stderr: stderr.context("capturing stderr")?,
             },
         })

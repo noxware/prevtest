@@ -8,8 +8,9 @@ use crate::{
     storage::{Cache, State},
 };
 use anyhow::{Context, Result};
+use std::process::ExitStatus;
 
-pub fn run(invocation: Invocation) -> Result<i32> {
+pub fn run(invocation: Invocation) -> Result<ExitStatus> {
     let binary_path = invocation.working_dir.join(&invocation.executable);
     let state = State::open(&invocation.state_dir)
         .inspect_err(|error| eprintln!("prevtest: local state unavailable: {error:#}"))
@@ -51,56 +52,56 @@ pub fn run(invocation: Invocation) -> Result<i32> {
     }
 }
 
-fn on_force(invocation: &Invocation, cache: &Cache, key: &CacheKey) -> Result<i32> {
+fn on_force(invocation: &Invocation, cache: &Cache, key: &CacheKey) -> Result<ExitStatus> {
     let result = execute_and_update_cache(invocation, cache, key)?;
     match result.cache_update {
         Ok(()) => {
             reporting::write(invocation.report_path.as_deref(), Outcome::Forced);
-            Ok(result.exit_code)
+            Ok(result.status)
         }
-        Err(error) => on_cache_update_failed(invocation, error, result.exit_code),
+        Err(error) => on_cache_update_failed(invocation, error, result.status),
     }
 }
 
-fn on_cache_hit(invocation: &Invocation, output: &CapturedOutput) -> Result<i32> {
+fn on_cache_hit(invocation: &Invocation, output: &CapturedOutput) -> Result<ExitStatus> {
     execution::replay(output)?;
     reporting::write(invocation.report_path.as_deref(), Outcome::Cached);
-    Ok(0)
+    Ok(ExitStatus::default())
 }
 
-fn on_cache_miss(invocation: &Invocation, cache: &Cache, key: &CacheKey) -> Result<i32> {
+fn on_cache_miss(invocation: &Invocation, cache: &Cache, key: &CacheKey) -> Result<ExitStatus> {
     let result = execute_and_update_cache(invocation, cache, key)?;
     match result.cache_update {
         Ok(()) => {
             reporting::write(invocation.report_path.as_deref(), Outcome::CacheMiss);
-            Ok(result.exit_code)
+            Ok(result.status)
         }
-        Err(error) => on_cache_update_failed(invocation, error, result.exit_code),
+        Err(error) => on_cache_update_failed(invocation, error, result.status),
     }
 }
 
-fn on_cache_unavailable(invocation: &Invocation, error: anyhow::Error) -> Result<i32> {
+fn on_cache_unavailable(invocation: &Invocation, error: anyhow::Error) -> Result<ExitStatus> {
     eprintln!("prevtest: cache unavailable, executing test: {error:#}");
     let executed = execution::run(&invocation.executable, &invocation.args)?;
     reporting::write(invocation.report_path.as_deref(), Outcome::CacheUnavailable);
-    Ok(executed.exit_code())
+    Ok(executed.status)
 }
 
 fn on_cache_update_failed(
     invocation: &Invocation,
     error: anyhow::Error,
-    exit_code: i32,
-) -> Result<i32> {
+    status: ExitStatus,
+) -> Result<ExitStatus> {
     eprintln!("prevtest: could not update cache: {error:#}");
     reporting::write(
         invocation.report_path.as_deref(),
         Outcome::CacheUpdateFailed,
     );
-    Ok(exit_code)
+    Ok(status)
 }
 
 struct RunResult {
-    exit_code: i32,
+    status: ExitStatus,
     cache_update: Result<()>,
 }
 
@@ -110,7 +111,7 @@ fn execute_and_update_cache(
     key: &CacheKey,
 ) -> Result<RunResult> {
     let executed = execution::run(&invocation.executable, &invocation.args)?;
-    let cache_update = if executed.status.success() {
+    let cache_update = if executed.status.success() && !executed.interrupted {
         cache.put_result(
             key,
             &invocation.binary_id,
@@ -121,7 +122,7 @@ fn execute_and_update_cache(
         cache.delete_result(key)
     };
     Ok(RunResult {
-        exit_code: executed.exit_code(),
+        status: executed.status,
         cache_update,
     })
 }
